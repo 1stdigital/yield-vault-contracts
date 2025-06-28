@@ -12,7 +12,15 @@
         "size": "hardhat size-contracts",
         "flatten": "hardhat flatten",
         "lint": "solhint 'src/**/*.sol'",
-        "lint:fix": "solhint 'src/**/*.sol' --fix"
+        "lint:fix": "solhint 'src/**/*.sol' --fix",
+        "test": "hardhat test",
+        "test:security": "hardhat test test/Security.test.js",
+        "test:gas": "REPORT_GAS=true hardhat test test/GasOptimization.test.js",
+        "test:edge": "hardhat test test/EdgeCases.test.js",
+        "test:main": "hardhat test test/ERC4626YieldVault.test.js",
+        "test:coverage": "hardhat coverage",
+        "test:all": "hardhat test --parallel",
+        "test:watch": "hardhat test --watch"
     },
     "dependencies": {
         "@openzeppelin/contracts": "^4.9.3",
@@ -23,7 +31,9 @@
         "@nomicfoundation/hardhat-ethers": "^3.0.0",
         "@nomicfoundation/hardhat-network-helpers": "^1.0.12",
         "@nomicfoundation/hardhat-verify": "^2.0.14",
+        "@openzeppelin/hardhat-defender": "^2.0.0",
         "@openzeppelin/hardhat-upgrades": "^3.0.0",
+        "@shardlabs/starknet-hardhat-plugin": "^0.8.0-alpha.5",
         "@typechain/ethers-v6": "^0.5.0",
         "@typechain/hardhat": "^9.0.0",
         "chai": "^4.3.7",

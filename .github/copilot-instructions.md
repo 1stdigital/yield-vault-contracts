@@ -14,11 +14,15 @@
 - `npm run size` - Check contract size with hardhat-contract-sizer
 - `npm run flatten` - Flatten contracts for verification
 
-### Testing (Not yet implemented)
-- `npm test` - Run all tests with Mocha framework (future implementation)
-- `npm run test:security` - Security-focused tests (future implementation)
-- `npm run test:coverage` - Test coverage reports with solidity-coverage (future implementation)
-- `npm run test:gas` - Gas usage analysis with hardhat-gas-reporter (future implementation)
+### Testing (Comprehensive test suite implemented)
+- `npm test` - Run all tests with Mocha framework
+- `npm run test:main` - Run core ERC4626YieldVault functionality tests
+- `npm run test:security` - Run security-focused tests (reentrancy, flash loans, access control)
+- `npm run test:gas` - Run gas optimization and usage analysis tests
+- `npm run test:edge` - Run edge cases and integration tests
+- `npm run test:coverage` - Generate test coverage reports with solidity-coverage
+- `npm run test:all` - Run all tests in parallel for faster execution
+- `npm run test:watch` - Run tests in watch mode for development
 
 ## Project Architecture
 
@@ -79,9 +83,18 @@ src/
 ├── contracts/
 │   ├── ERC4626YieldVault.sol  # Main vault contract
 │   ├── BaseToken.sol          # Test token implementation
-│   └── TestContracts.sol      # Testing utilities
+│   ├── TestContracts.sol      # MockERC20 and testing utilities
+│   └── MaliciousContracts.sol # Security testing contracts
 ├── scripts/                   # Deployment scripts (empty)
 └── tests/                     # Test suites (empty)
+test/
+├── ERC4626YieldVault.test.js  # Core functionality tests
+├── Security.test.js           # Comprehensive security tests
+├── GasOptimization.test.js    # Gas usage and optimization tests
+├── EdgeCases.test.js          # Edge cases and integration tests
+├── helpers/
+│   └── TestHelpers.js         # Test utility functions
+└── README.md                  # Test documentation
 ```
 
 ### Import Standards
@@ -118,12 +131,12 @@ src/
 
 ## Testing Philosophy
 
-### Test Categories (To be implemented)
+### Test Categories (Comprehensive test suite implemented)
 - **Unit Tests**: Individual function verification
 - **Integration Tests**: Contract interaction testing
-- **Security Tests**: Attack vector validation
-- **Edge Case Tests**: Boundary condition handling
-- **Gas Tests**: Optimization verification
+- **Security Tests**: Attack vector validation (reentrancy, flash loans, MEV)
+- **Edge Case Tests**: Boundary condition handling and multi-user scenarios
+- **Gas Tests**: Optimization verification and usage benchmarks
 
 ### Security Testing Focus
 - Reentrancy attack prevention
@@ -182,7 +195,7 @@ src/
 - **Package Name**: @1stdigital/sfdusd-contracts
 - **License**: MIT
 
-This is a smart contract repository focused on DeFi yield vault implementation with emphasis on security, upgradability, and ERC-4626 compliance.
+This is a smart contract repository focused on DeFi yield vault implementation with emphasis on security, upgradability, and ERC-4626 compliance. Tests use generic naming (e.g., "Yield Vault Shares", "YVS") to avoid product-specific references.
 
 ## Development Environment
 
