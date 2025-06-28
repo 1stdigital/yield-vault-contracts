@@ -1,0 +1,60 @@
+{
+    "name": "@1stdigital/sfdusd-contracts",
+    "version": "1.0.0",
+    "description": "Smart contracts for sFDUSD Yield Vault system",
+    "main": "index.js",
+    "scripts": {
+        "build": "hardhat compile",
+        "typechain": "hardhat typechain",
+        "node": "hardhat node",
+        "dev": "hardhat node",
+        "clean": "hardhat clean",
+        "size": "hardhat size-contracts",
+        "flatten": "hardhat flatten",
+        "lint": "solhint 'src/**/*.sol'",
+        "lint:fix": "solhint 'src/**/*.sol' --fix"
+    },
+    "dependencies": {
+        "@openzeppelin/contracts": "^4.9.3",
+        "@openzeppelin/contracts-upgradeable": "^4.9.3"
+    },
+    "devDependencies": {
+        "@nomicfoundation/hardhat-chai-matchers": "^2.0.0",
+        "@nomicfoundation/hardhat-ethers": "^3.0.0",
+        "@nomicfoundation/hardhat-network-helpers": "^1.0.12",
+        "@nomicfoundation/hardhat-verify": "^2.0.14",
+        "@openzeppelin/hardhat-upgrades": "^3.0.0",
+        "@typechain/ethers-v6": "^0.5.0",
+        "@typechain/hardhat": "^9.0.0",
+        "chai": "^4.3.7",
+        "cross-env": "^7.0.3",
+        "dotenv": "^16.3.1",
+        "ethers": "^6.4.0",
+        "hardhat": "^2.19.0",
+        "hardhat-contract-sizer": "^2.10.0",
+        "hardhat-gas-reporter": "^1.0.9",
+        "solhint": "^4.0.0",
+        "solidity-coverage": "^0.8.4",
+        "typechain": "^8.3.0"
+    },
+    "keywords": [
+        "solidity",
+        "smart-contracts",
+        "evm",
+        "stablecoin",
+        "defi",
+        "openzeppelin",
+        "sfdusd",
+        "yield-vault"
+    ],
+    "author": "1st Digital",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/1stdigital/sfdusd-contracts.git"
+    },
+    "bugs": {
+        "url": "https://github.com/1stdigital/sfdusd-contracts/issues"
+    },
+    "homepage": "https://github.com/1stdigital/sfdusd-contracts#readme"
+}
