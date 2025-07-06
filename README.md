@@ -4,7 +4,7 @@ This repository contains a smart contract for a yield-bearing vault based on the
 
 ## Repository Structure
 
-This is a standalone repository containing the smart contract implementation. Frontend applications and backend services will be maintained in separate repositories.
+This is a standalone repository containing the smart contract implementation. 
 
 ## Features
 
