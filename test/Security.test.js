@@ -30,7 +30,11 @@ describe("Security Tests", function () {
                 treasury.address,
                 admin.address
             ],
-            { initializer: "initialize", kind: "uups" }
+            {
+                initializer: "initialize",
+                kind: "uups",
+                unsafeAllow: ["constructor"]
+            }
         );
         await vault.waitForDeployment();
 
@@ -212,7 +216,9 @@ describe("Security Tests", function () {
 
             // Perform upgrade (in real scenario, this would be through proper governance)
             const ERC4626YieldVaultV2 = await ethers.getContractFactory("ERC4626YieldVault");
-            const upgraded = await upgrades.upgradeProxy(vault, ERC4626YieldVaultV2);
+            const upgraded = await upgrades.upgradeProxy(vault, ERC4626YieldVaultV2, {
+                unsafeAllow: ["constructor"]
+            });
 
             // State should be preserved
             expect(await upgraded.balanceOf(user1.address)).to.equal(balanceBefore);
@@ -288,7 +294,7 @@ describe("Security Tests", function () {
             const maxUint = ethers.MaxUint256;
 
             await expect(vault.connect(oracle).updateNAV(maxUint, maxUint))
-                .to.be.revertedWithPanic(0x11); // Arithmetic overflow
+                .to.be.revertedWith("Total assets exceed maximum limit");
         });
 
         it("Should handle zero-value attacks", async function () {

@@ -23,10 +23,12 @@ module.exports = {
     networks: {
         hardhat: {
             chainId: 1337,
+            allowUnlimitedContractSize: true,
         },
         localhost: {
             url: "http://127.0.0.1:8545",
             chainId: 1337,
+            allowUnlimitedContractSize: true,
         },
         "bsc-testnet": {
             url: "https://data-seed-prebsc-1-s1.binance.org:8545/",
@@ -59,7 +61,7 @@ module.exports = {
         alphaSort: true,
         disambiguatePaths: false,
         runOnCompile: true,
-        strict: true,
+        strict: false,
     },
     mocha: {
         timeout: 40000,

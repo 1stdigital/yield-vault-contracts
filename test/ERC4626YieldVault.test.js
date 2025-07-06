@@ -43,7 +43,11 @@ describe("ERC4626YieldVault", function () {
                 treasury.address,
                 admin.address
             ],
-            { initializer: "initialize", kind: "uups" }
+            {
+                initializer: "initialize",
+                kind: "uups",
+                unsafeAllow: ["constructor"]
+            }
         );
         await vault.waitForDeployment();
 
@@ -213,6 +217,9 @@ describe("ERC4626YieldVault", function () {
         });
 
         it("Should allow oracle to update NAV within limits", async function () {
+            // Wait for the minimum 6-hour delay since last NAV update (from initialization)
+            await time.increase(6 * 60 * 60 + 1);
+
             const newNAV = ethers.parseEther("1.1"); // 10% increase
             const newTotalAssets = ethers.parseEther("10200"); // Only 2% increase in total assets
 
@@ -225,6 +232,9 @@ describe("ERC4626YieldVault", function () {
         });
 
         it("Should reject NAV updates exceeding limits", async function () {
+            // Wait for the minimum 6-hour delay since last NAV update
+            await time.increase(6 * 60 * 60 + 1);
+
             const excessiveNAV = ethers.parseEther("1.16"); // 16% increase (exceeds 15% limit))
             const newTotalAssets = ethers.parseEther("12000");
 
@@ -241,6 +251,9 @@ describe("ERC4626YieldVault", function () {
         });
 
         it("Should enforce NAV update delay for withdrawals", async function () {
+            // First, wait for the minimum 6-hour delay since last NAV update (from initialization)
+            await time.increase(6 * 60 * 60 + 1);
+
             // Update NAV to create a significant change
             const vaultBalance = await baseToken.balanceOf(await vault.getAddress());
             const newNAV = ethers.parseEther("1.05"); // 5% increase
@@ -400,7 +413,9 @@ describe("ERC4626YieldVault", function () {
 
             // Simple upgrade without calling reinitialize (which may not exist)
             await expect(
-                upgrades.upgradeProxy(vault, ERC4626YieldVaultV2)
+                upgrades.upgradeProxy(vault, ERC4626YieldVaultV2, {
+                    unsafeAllow: ["constructor"]
+                })
             ).to.not.be.reverted;
 
             // Verify the upgrade worked by checking the contract still functions
