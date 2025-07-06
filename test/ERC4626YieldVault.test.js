@@ -371,14 +371,14 @@ describe("ERC4626YieldVault", function () {
             const user2SharesBefore = await vault.balanceOf(user2.address);
 
             // Withdraw user1 first
-            await expect(vault.connect(admin).emergencyBatchWithdraw([user1.address], [user1.address]))
+            await expect(vault.connect(admin).batchWithdraw([user1.address], [user1.address], true))
                 .to.emit(vault, "BatchWithdrawal");
 
             expect(await vault.balanceOf(user1.address)).to.equal(0);
             expect(user1SharesBefore).to.be.gt(0); // Verify we actually had shares to withdraw
 
             // Withdraw user2 second
-            await expect(vault.connect(admin).emergencyBatchWithdraw([user2.address], [user2.address]))
+            await expect(vault.connect(admin).batchWithdraw([user2.address], [user2.address], true))
                 .to.emit(vault, "BatchWithdrawal");
 
             expect(await vault.balanceOf(user2.address)).to.equal(0);
@@ -389,7 +389,7 @@ describe("ERC4626YieldVault", function () {
             const users = [user1.address];
             const receivers = [user1.address]; // Emergency withdrawal sends to same address
 
-            await expect(vault.connect(user1).emergencyBatchWithdraw(users, receivers))
+            await expect(vault.connect(user1).batchWithdraw(users, receivers, true))
                 .to.be.revertedWith(/AccessControl.*missing role/);
         });
     });
