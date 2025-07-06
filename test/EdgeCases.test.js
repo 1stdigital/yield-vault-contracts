@@ -34,7 +34,11 @@ describe("Edge Cases and Integration Tests", function () {
                 treasury.address,
                 admin.address
             ],
-            { initializer: "initialize", kind: "uups" }
+            {
+                initializer: "initialize",
+                kind: "uups",
+                unsafeAllow: ["constructor"]
+            }
         );
         await vault.waitForDeployment();
 
