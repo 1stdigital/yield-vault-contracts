@@ -34,8 +34,8 @@ describe("Edge Cases and Integration Tests", function () {
                 treasury.address,
                 admin.address
             ],
-            { 
-                initializer: "initialize", 
+            {
+                initializer: "initialize",
                 kind: "uups",
                 unsafeAllow: ["constructor"]
             }
