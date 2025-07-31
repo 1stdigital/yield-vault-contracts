@@ -239,7 +239,7 @@ describe("ERC4626YieldVault", function () {
             const newTotalAssets = ethers.parseEther("12000");
 
             await expect(vault.connect(oracle).updateNAV(excessiveNAV, newTotalAssets))
-                .to.be.revertedWith("NAV change too large");
+                .to.be.revertedWithCustomError(vault, "NAVUpdateValidationFailed");
         });
 
         it("Should reject unauthorized NAV updates", async function () {

@@ -146,7 +146,7 @@ describe("Security Tests", function () {
             const excessiveNAV = ethers.parseEther("1.16"); // 16% increase (exceeds 15% limit))
 
             await expect(vault.connect(oracle).updateNAV(excessiveNAV, ethers.parseEther("116000")))
-                .to.be.revertedWith("NAV change too large");
+                .to.be.revertedWithCustomError(vault, "NAVUpdateValidationFailed");
         });
 
         it("Should enforce reserve ratio to prevent bank run", async function () {
@@ -294,7 +294,7 @@ describe("Security Tests", function () {
             const maxUint = ethers.MaxUint256;
 
             await expect(vault.connect(oracle).updateNAV(maxUint, maxUint))
-                .to.be.revertedWith("Total assets exceed maximum limit");
+                .to.be.revertedWithCustomError(vault, "NAVUpdateValidationFailed");
         });
 
         it("Should handle zero-value attacks", async function () {

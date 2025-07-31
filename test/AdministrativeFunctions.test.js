@@ -125,7 +125,7 @@ describe("Administrative Functions and Events Tests", function () {
 
             // Transaction reverts with NAV change validation
             await expect(vault.connect(oracle).updateNAV(excessiveNAV, vaultBalance))
-                .to.be.revertedWith("NAV change too large");
+                .to.be.revertedWithCustomError(vault, "NAVUpdateValidationFailed");
         });
 
         it("Should emit ReserveRatioViolation events when applicable", async function () {
