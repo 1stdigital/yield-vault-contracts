@@ -117,6 +117,12 @@ contract ERC4626YieldVault is
         uint256 amount,
         uint256 remainingBalance
     );
+    event TreasuryDeposit(
+        address indexed treasury,
+        uint256 amount,
+        uint256 newBalance,
+        uint256 yieldEarned
+    );
     event WithdrawalCooldownUpdated(uint256 oldValue, uint256 newValue);
     event MaxUserDepositUpdated(uint256 oldValue, uint256 newValue);
     event MaxTotalDepositsUpdated(uint256 oldValue, uint256 newValue);
@@ -403,7 +409,9 @@ contract ERC4626YieldVault is
     }
 
     /**
-     * @notice Withdraws funds to the treasury address (treasury role only)
+     * @notice Withdraws funds to the treasury address for DeFi deployment (treasury role only)
+     * @dev Moves assets from vault to treasury for external yield generation
+     * @dev Does not affect totalAssetsManaged as assets remain under vault management
      * @param amount The amount to withdraw to treasury
      */
     function withdrawToTreasury(
@@ -412,8 +420,39 @@ contract ERC4626YieldVault is
         require(amount > 0, "Zero amount");
         uint256 vaultBalance = _getVaultBalance();
         require(amount <= vaultBalance, "Insufficient balance");
+        
         IERC20Upgradeable(asset()).safeTransfer(treasuryAddress, amount);
         emit TreasuryWithdrawal(treasuryAddress, amount, vaultBalance - amount);
+    }
+
+    /**
+     * @notice Deposits assets back from treasury operations (treasury role only)
+     * @dev Returns principal + yield from DeFi strategies back to the vault
+     * @dev Does not affect totalAssetsManaged as this only changes asset location
+     * @param amount The amount to deposit back from treasury operations
+     */
+    function depositFromTreasury(
+        uint256 amount
+    ) external onlyRole(TREASURY_ROLE) whenNotPaused {
+        require(amount > 0, "Zero amount");
+        
+        uint256 currentBalance = _getVaultBalance();
+        
+        // Calculate potential yield earned (difference from what we expect to return)
+        // Note: This is informational only - actual yield tracking requires off-chain data
+        uint256 vaultAssetsBeforeDeposit = currentBalance;
+        uint256 estimatedYield = amount > vaultAssetsBeforeDeposit ? 
+            amount - vaultAssetsBeforeDeposit : 0;
+        
+        // Transfer assets from treasury to vault
+        IERC20Upgradeable(asset()).safeTransferFrom(
+            treasuryAddress,
+            address(this),
+            amount
+        );
+        
+        uint256 newBalance = currentBalance + amount;
+        emit TreasuryDeposit(treasuryAddress, amount, newBalance, estimatedYield);
     }
 
     /**
@@ -920,6 +959,32 @@ contract ERC4626YieldVault is
         bool navDelayMet = block.timestamp >= lastNAVChangeTime + navUpdateDelay;
 
         return depositCooldownMet && withdrawalRateLimitMet && navDelayMet;
+    }
+
+    /**
+     * @notice Returns a complete breakdown of asset allocation
+     * @return vaultBalance Assets physically in the vault
+     * @return treasuryDeployed Assets deployed to treasury operations
+     * @return totalManaged Total assets under management
+     * @return utilizationRate Percentage of assets deployed (basis points, 10000 = 100%)
+     */
+    function getAssetAllocation() public view returns (
+        uint256 vaultBalance,
+        uint256 treasuryDeployed, 
+        uint256 totalManaged,
+        uint256 utilizationRate
+    ) {
+        vaultBalance = _getVaultBalance();
+        totalManaged = totalAssetsManaged;
+        
+        if (vaultBalance >= totalManaged) {
+            // No assets in treasury, possibly have excess yield
+            treasuryDeployed = 0;
+            utilizationRate = 0;
+        } else {
+            treasuryDeployed = totalManaged - vaultBalance;
+            utilizationRate = totalManaged > 0 ? (treasuryDeployed * 10000) / totalManaged : 0;
+        }
     }
 
     function _authorizeUpgrade(
