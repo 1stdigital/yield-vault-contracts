@@ -162,7 +162,7 @@ describe("Enhanced Time Validation Tests", function () {
             await expect(vault.connect(oracle).updateNAV(
                 ethers.parseEther("1.1"),
                 vaultBalance * 110n / 100n
-            )).to.be.revertedWith("Update too frequent");
+            )).to.be.revertedWithCustomError(vault, "NAVUpdateValidationFailed");
 
             // After 6 hours, should work again
             await time.increase(6 * 60 * 60 + 1);

@@ -64,10 +64,10 @@ describe("Bounds and Overflow Protection Tests", function () {
             await time.increase(6 * 60 * 60 + 1);
 
             await expect(vault.connect(oracle).updateNAV(tooHighNAV, ethers.parseEther("1000000")))
-                .to.be.revertedWith("NAV outside allowed bounds");
+                .to.be.revertedWithCustomError(vault, "NAVUpdateValidationFailed");
 
             await expect(vault.connect(oracle).updateNAV(tooLowNAV, ethers.parseEther("1000000")))
-                .to.be.revertedWith("NAV outside allowed bounds");
+                .to.be.revertedWithCustomError(vault, "NAVUpdateValidationFailed");
         });
 
         it("Should prevent total assets exceeding MAX_TOTAL_ASSETS", async function () {
@@ -78,7 +78,7 @@ describe("Bounds and Overflow Protection Tests", function () {
             await expect(vault.connect(oracle).updateNAV(
                 ethers.parseEther("1.1"),
                 excessiveTotalAssets
-            )).to.be.revertedWith("Total assets exceed maximum limit");
+            )).to.be.revertedWithCustomError(vault, "NAVUpdateValidationFailed");
         });
 
         it("Should emit BoundsCheckFailed events", async function () {
@@ -105,7 +105,7 @@ describe("Bounds and Overflow Protection Tests", function () {
             const vaultBalance = await baseToken.balanceOf(await vault.getAddress());
 
             await expect(vault.connect(oracle).updateNAV(extremeNAV, vaultBalance))
-                .to.be.revertedWith("NAV change too large");
+                .to.be.revertedWithCustomError(vault, "NAVUpdateValidationFailed");
         });
 
         it("Should validate user deposits tracking doesn't overflow", async function () {
@@ -125,26 +125,26 @@ describe("Bounds and Overflow Protection Tests", function () {
         it("Should validate admin parameter setters bounds", async function () {
             // Test setWithdrawalCooldown bounds
             await expect(vault.connect(admin).setWithdrawalCooldown(31 * 24 * 60 * 60))
-                .to.be.revertedWith("Cooldown too long");
+                .to.be.revertedWithCustomError(vault, "AdminParameterInvalid");
 
             // Test cooldown exceeding timestamp limits (uint48 max)
             const maxUint48 = 2n ** 48n - 1n;
             await expect(vault.connect(admin).setWithdrawalCooldown(maxUint48 + 1n))
-                .to.be.revertedWith("Cooldown too long");
+                .to.be.revertedWithCustomError(vault, "AdminParameterInvalid");
 
             // Test setMaxUserDeposit bounds
             await expect(vault.connect(admin).setMaxUserDeposit(0))
-                .to.be.revertedWith("Max user deposit must be positive");
+                .to.be.revertedWithCustomError(vault, "AdminParameterInvalid");
 
             await expect(vault.connect(admin).setMaxUserDeposit(ethers.parseEther("10000001")))
-                .to.be.revertedWith("Max user deposit too large");
+                .to.be.revertedWithCustomError(vault, "AdminParameterInvalid");
 
             // Test setMaxTotalDeposits bounds
             await expect(vault.connect(admin).setMaxTotalDeposits(ethers.parseEther("50000")))
-                .to.be.revertedWith("Max total deposits too low");
+                .to.be.revertedWithCustomError(vault, "AdminParameterInvalid");
 
             await expect(vault.connect(admin).setMaxTotalDeposits(ethers.parseEther("1000000001")))
-                .to.be.revertedWith("Max total deposits too large");
+                .to.be.revertedWithCustomError(vault, "AdminParameterInvalid");
 
             // Test setMinReserveRatio bounds
             await expect(vault.connect(admin).setMinReserveRatio(10001))
@@ -156,10 +156,10 @@ describe("Bounds and Overflow Protection Tests", function () {
 
             // Test setNAVUpdateDelay bounds
             await expect(vault.connect(admin).setNAVUpdateDelay(25 * 60 * 60))
-                .to.be.revertedWith("Delay too long");
+                .to.be.revertedWithCustomError(vault, "AdminParameterInvalid");
 
             await expect(vault.connect(admin).setNAVUpdateDelay(maxUint48 + 1n))
-                .to.be.revertedWith("Delay too long");
+                .to.be.revertedWithCustomError(vault, "AdminParameterInvalid");
         });
 
         it("Should enforce vault-wide deposit limits with overflow protection", async function () {
@@ -206,7 +206,7 @@ describe("Bounds and Overflow Protection Tests", function () {
             const edgeNAV = ethers.parseEther("0.000001"); // Minimum NAV
 
             await expect(vault.connect(oracle).updateNAV(edgeNAV, vaultBalance))
-                .to.be.revertedWith("NAV change too large");
+                .to.be.revertedWithCustomError(vault, "NAVUpdateValidationFailed");
         });
 
         it("Should handle edge cases in share-to-asset conversion", async function () {
@@ -218,7 +218,7 @@ describe("Bounds and Overflow Protection Tests", function () {
 
             // This should work but with total assets validation constraints
             await expect(vault.connect(oracle).updateNAV(minViableNAV, vaultBalance / 1000n))
-                .to.be.revertedWith("NAV change too large");
+                .to.be.revertedWithCustomError(vault, "NAVUpdateValidationFailed");
         });
     });
 

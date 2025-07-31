@@ -358,7 +358,7 @@ describe("Edge Cases and Integration Tests", function () {
             // Try maximum allowed change (15%) - this should still fail due to total assets validation
             const maxNAV = currentNAV * (10000n + BigInt(maxChange)) / 10000n;
             await expect(vault.connect(oracle).updateNAV(maxNAV, vaultBalance * (10000n + BigInt(maxChange)) / 10000n))
-                .to.be.revertedWith("Total assets validation failed");
+                .to.be.revertedWithCustomError(vault, "NAVUpdateValidationFailed");
         });
 
         it("Should handle reserve ratio at exact limits", async function () {
