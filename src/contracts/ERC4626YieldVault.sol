@@ -9,7 +9,7 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/utils/SafeERC20Upgradeable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/utils/math/Math.sol";
+import "@openzeppelin/contracts-upgradeable/utils/math/MathUpgradeable.sol";
 import "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
@@ -24,16 +24,9 @@ contract ERC4626YieldVault is
     AccessControlUpgradeable,
     UUPSUpgradeable
 {
-    using Math for uint256;
+    using MathUpgradeable for uint256;
     using SafeERC20Upgradeable for IERC20Upgradeable;
     using SafeCast for uint256;
-
-    /// @dev Enhanced time constraint structure for M-02 fix
-    struct TimeConstraint {
-        uint48 timestamp; // Gas-optimized timestamp (uint48 from OpenZeppelin)
-        uint32 blockNumber; // Block number for manipulation resistance
-        uint48 tolerance; // Maximum acceptable timestamp deviation
-    }
 
     // ============================================================================
     // CONSTANTS - Security and Bounds Definitions  
@@ -74,12 +67,6 @@ contract ERC4626YieldVault is
      */
     uint256 private constant MAX_SHARES_SUPPLY = 1e27; // Maximum total shares that can exist
 
-    // Constants for enhanced timing validation
-    uint32 private constant WITHDRAWAL_DELAY_BLOCKS = 100; // ~20 minutes on most chains
-    uint48 private constant WITHDRAWAL_DELAY_TIME = 1 hours; // User-friendly time
-    uint48 private constant MAX_TIMESTAMP_DRIFT = 15 minutes; // Maximum clock drift tolerance
-    uint48 private constant GRACE_PERIOD = 2 weeks; // Compound-style grace period
-
     // ============================================================================
     // ROLES
     // ============================================================================
@@ -104,12 +91,10 @@ contract ERC4626YieldVault is
     uint256 public withdrawalCooldown;
     uint256 public maxUserDeposit;
     uint256 public maxTotalDeposits;
-    uint256 public minReserveRatio;
 
-    // Time constraints (M-02 fix)
-    mapping(address => TimeConstraint) public lastDepositConstraint;
-    mapping(address => TimeConstraint) public lastWithdrawalConstraint;
-    mapping(address => uint32) private lastCriticalActionBlock;
+    // Time constraints - simplified for efficiency
+    mapping(address => uint256) public lastDepositTime;
+    mapping(address => uint256) public lastWithdrawalTime;
     mapping(address => uint256) public userDeposits;
 
     // Security enhancements
@@ -117,6 +102,10 @@ contract ERC4626YieldVault is
     uint256 public navUpdateDelay;
     uint256 public lastNAVChangeTime;
     uint256 public maxTotalAssetsDeviation;
+
+    // Whitelist functionality
+    bool public whitelistEnabled;
+    mapping(address => bool) public isWhitelisted;
 
     // ============================================================================
     // EVENTS
@@ -132,10 +121,15 @@ contract ERC4626YieldVault is
         uint256 amount,
         uint256 remainingBalance
     );
+    event TreasuryDeposit(
+        address indexed treasury,
+        uint256 amount,
+        uint256 newBalance,
+        uint256 yieldEarned
+    );
     event WithdrawalCooldownUpdated(uint256 oldValue, uint256 newValue);
     event MaxUserDepositUpdated(uint256 oldValue, uint256 newValue);
     event MaxTotalDepositsUpdated(uint256 oldValue, uint256 newValue);
-    event MinReserveRatioUpdated(uint256 oldValue, uint256 newValue);
     event MaxNAVChangeUpdated(uint256 oldValue, uint256 newValue);
     event NAVUpdateDelayUpdated(uint256 oldValue, uint256 newValue);
     event SlippageProtectionTriggered(
@@ -161,19 +155,6 @@ contract ERC4626YieldVault is
         string operation,
         uint256 inputValue
     );
-
-    // Events for timestamp monitoring (M-02)
-    event TimestampValidationFailed(
-        address indexed user,
-        string reason,
-        uint48 timestamp
-    );
-    event BlockValidationFailed(
-        address indexed user,
-        uint32 currentBlock,
-        uint32 requiredBlock
-    );
-    event EmergencyTimestampBypass(address indexed user);
 
     // Missing administrative events (L-01 fix)
     event TreasuryAddressUpdated(
@@ -204,12 +185,12 @@ contract ERC4626YieldVault is
         uint256 changePercentage,
         uint256 maxAllowedChange
     );
-    event ReserveRatioViolation(
-        address indexed user,
-        uint256 attemptedWithdrawal,
-        uint256 currentRatio,
-        uint256 minimumRatio
-    );
+
+    // Whitelist events
+    event WhitelistStatusChanged(bool enabled, address indexed admin);
+    event AddressWhitelisted(address indexed account, address indexed admin);
+    event AddressRemovedFromWhitelist(address indexed account, address indexed admin);
+    event WhitelistAccessDenied(address indexed account, string operation);
 
     // ============================================================================
     // CUSTOM ERRORS
@@ -247,6 +228,10 @@ contract ERC4626YieldVault is
         string reason
     );
 
+    // Whitelist errors
+    error WhitelistViolation(address account, string operation);
+    error WhitelistManagementFailed(address account, string reason);
+
     // ============================================================================
     // CONSTRUCTOR
     // ============================================================================
@@ -276,7 +261,6 @@ contract ERC4626YieldVault is
         withdrawalCooldown = 24 hours;
         maxUserDeposit = 100_000e18;
         maxTotalDeposits = 5_000_000e18;
-        minReserveRatio = 2000; // 20%
 
         // Set initial security parameters
         maxNAVChange = 1500; // 15% max change (basis points)
@@ -290,6 +274,25 @@ contract ERC4626YieldVault is
         _grantRole(TREASURY_ROLE, _defaultAdmin);
         _grantRole(PAUSER_ROLE, _defaultAdmin);
         _grantRole(UPGRADER_ROLE, _defaultAdmin);
+
+        // Initialize whitelist as disabled
+        whitelistEnabled = false;
+    }
+
+    // ============================================================================
+    // MODIFIERS
+    // ============================================================================
+
+    /**
+     * @dev Modifier to check if an account is whitelisted when whitelist is enabled
+     * @param account The address to check whitelist status for
+     */
+    modifier onlyWhitelisted(address account) {
+        if (whitelistEnabled && !isWhitelisted[account]) {
+            emit WhitelistAccessDenied(account, "access_restricted_to_whitelisted_accounts");
+            revert WhitelistViolation(account, "account_not_whitelisted");
+        }
+        _;
     }
 
     // ============================================================================
@@ -308,12 +311,21 @@ contract ERC4626YieldVault is
     // EXTERNAL FUNCTIONS - ERC4626 INTERFACE
     // ============================================================================
 
-    // Override max functions to respect our business limits
+    /** @dev See {IERC4626-maxDeposit}. */
     function maxDeposit(
         address receiver
     ) public view override returns (uint256) {
         if (paused()) return 0;
+        
+        // Check whitelist if enabled
+        if (whitelistEnabled && !isWhitelisted[receiver]) return 0;
 
+        // ERC-4626 compliance: Return type(uint256).max if no effective limits
+        if (maxUserDeposit >= MAX_SINGLE_DEPOSIT && maxTotalDeposits >= MAX_TOTAL_ASSETS) {
+            return type(uint256).max;
+        }
+
+        // Calculate remaining limits for this receiver
         uint256 remainingUserLimit = maxUserDeposit > userDeposits[receiver]
             ? maxUserDeposit - userDeposits[receiver]
             : 0;
@@ -334,10 +346,16 @@ contract ERC4626YieldVault is
      */
     function maxMint(address receiver) public view override returns (uint256) {
         uint256 maxAssets = maxDeposit(receiver);
+        
+        // ERC-4626 compliance: Return type(uint256).max if no effective limits
+        if (maxAssets == type(uint256).max) {
+            return type(uint256).max;
+        }
+        
         return
             maxAssets == 0
                 ? 0
-                : _convertToShares(maxAssets, Math.Rounding.Down);
+                : _convertToShares(maxAssets, MathUpgradeable.Rounding.Down);
     }
 
     /**
@@ -360,67 +378,203 @@ contract ERC4626YieldVault is
         return super.maxRedeem(owner);
     }
 
-    // Override conversion functions to use custom NAV logic (M-02 fix)
-    function _convertToShares(
-        uint256 assets,
-        Math.Rounding rounding
-    ) internal view returns (uint256) {
-        // Combined bounds checking for gas optimization
-        if (assets > MAX_TOTAL_ASSETS || currentNAV < MIN_NAV_VALUE || currentNAV > MAX_NAV_VALUE) {
-            if (assets > MAX_TOTAL_ASSETS) {
-                revert ConversionOutOfBounds(assets, MAX_TOTAL_ASSETS, "assets_too_large");
+    /** @dev See {IERC4626-deposit}. Override to add whitelist check */
+    function deposit(uint256 assets, address receiver) public virtual override onlyWhitelisted(receiver) returns (uint256) {
+        return super.deposit(assets, receiver);
+    }
+
+    /** @dev See {IERC4626-mint}. Override to add whitelist check */
+    function mint(uint256 shares, address receiver) public virtual override onlyWhitelisted(receiver) returns (uint256) {
+        return super.mint(shares, receiver);
+    }
+
+    // ============================================================================
+    // EXTERNAL FUNCTIONS
+    // ============================================================================
+
+    /**
+     * @notice Returns the time remaining until withdrawal is allowed for a user
+     * @param user The address to check withdrawal timing for
+     * @return The number of seconds until withdrawal is allowed, 0 if already allowed
+     */
+    function timeUntilWithdrawal(address user) external view returns (uint256) {
+        uint256 cooldownEnd = lastDepositTime[user] + withdrawalCooldown;
+        uint256 navDelayEnd = lastNAVChangeTime + navUpdateDelay;
+        uint256 withdrawalDelayEnd = lastWithdrawalTime[user] + 1 minutes;
+
+        // Find the maximum constraint
+        uint256 maxEnd = cooldownEnd > navDelayEnd ? cooldownEnd : navDelayEnd;
+        maxEnd = maxEnd > withdrawalDelayEnd ? maxEnd : withdrawalDelayEnd;
+
+        return block.timestamp >= maxEnd ? 0 : maxEnd - block.timestamp;
+    }
+
+    /**
+     * @notice Updates the Net Asset Value and total assets (oracle only)
+     * @param newNAV The new NAV value (cannot be zero)
+     * @param newTotalAssets The new total assets amount
+     */
+    function updateNAV(
+        uint256 newNAV,
+        uint256 newTotalAssets
+    ) external onlyRole(ORACLE_ROLE) whenNotPaused {
+        // Basic validation first
+        if (
+            newNAV == 0 ||
+            newTotalAssets > MAX_TOTAL_ASSETS ||
+            block.timestamp < lastNAVUpdate + 6 hours
+        ) {
+            if (newNAV == 0) {
+                revert NAVUpdateValidationFailed(newNAV, currentNAV, 0, 0, "nav_must_be_positive");
             }
-            revert NAVOutOfRange(currentNAV, MIN_NAV_VALUE, MAX_NAV_VALUE, "nav_bounds_check_failed");
+            if (newTotalAssets > MAX_TOTAL_ASSETS) {
+                revert NAVUpdateValidationFailed(newNAV, currentNAV, 0, 0, "total_assets_exceed_maximum");
+            }
+            revert NAVUpdateValidationFailed(newNAV, currentNAV, 0, 0, "update_too_frequent");
         }
 
-        // Check for potential overflow in mulDiv operation
-        // assets * 10^decimals should not overflow
-        uint256 decimalsMultiplier = 10 ** decimals();
-        if (assets > type(uint256).max / decimalsMultiplier) {
-            revert ConversionOutOfBounds(assets, type(uint256).max / decimalsMultiplier, "overflow_protection");
+        // Calculate NAV change percentage once (eliminates 3 duplicate calculations)
+        uint256 changePercentage = _calculateNAVChangePercentage(newNAV);
+
+        // Consolidated validation with helper functions
+        _validateConsolidatedNAVUpdate(newNAV, newTotalAssets, changePercentage);
+
+        // Update state
+        uint256 oldNAV = currentNAV;
+        currentNAV = newNAV;
+        totalAssetsManaged = newTotalAssets;
+        lastNAVUpdate = block.timestamp;
+
+        // Track significant changes for front-running protection
+        if (changePercentage > 100) {
+            // More than 1% change
+            lastNAVChangeTime = block.timestamp;
         }
 
-        uint256 shares = assets.mulDiv(
-            decimalsMultiplier,
-            currentNAV,
-            rounding
+        emit NAVUpdated(oldNAV, newNAV, newTotalAssets, block.timestamp);
+    }
+
+    /**
+     * @notice Withdraws funds to the treasury address for DeFi deployment (treasury role only)
+     * @dev Moves assets from vault to treasury for external yield generation
+     * @dev Does not affect totalAssetsManaged as assets remain under vault management
+     * @param amount The amount to withdraw to treasury
+     */
+    function withdrawToTreasury(
+        uint256 amount
+    ) external onlyRole(TREASURY_ROLE) whenNotPaused {
+        require(amount > 0, "Zero amount");
+        uint256 vaultBalance = _getVaultBalance();
+        require(amount <= vaultBalance, "Insufficient balance");
+        
+        IERC20Upgradeable(asset()).safeTransfer(treasuryAddress, amount);
+        emit TreasuryWithdrawal(treasuryAddress, amount, vaultBalance - amount);
+    }
+
+    /**
+     * @notice Deposits assets back from treasury operations (treasury role only)
+     * @dev Returns principal + yield from DeFi strategies back to the vault
+     * @dev Does not affect totalAssetsManaged as this only changes asset location
+     * @param amount The amount to deposit back from treasury operations
+     */
+    function depositFromTreasury(
+        uint256 amount
+    ) external onlyRole(TREASURY_ROLE) whenNotPaused {
+        require(amount > 0, "Zero amount");
+        
+        uint256 currentBalance = _getVaultBalance();
+        
+        // Calculate potential yield earned (difference from what we expect to return)
+        // Note: This is informational only - actual yield tracking requires off-chain data
+        uint256 vaultAssetsBeforeDeposit = currentBalance;
+        uint256 estimatedYield = amount > vaultAssetsBeforeDeposit ? 
+            amount - vaultAssetsBeforeDeposit : 0;
+        
+        // Transfer assets from treasury to vault
+        IERC20Upgradeable(asset()).safeTransferFrom(
+            treasuryAddress,
+            address(this),
+            amount
         );
-
-        // Ensure resulting shares don't exceed maximum supply limits
-        if (shares > MAX_SHARES_SUPPLY) {
-            revert ConversionOutOfBounds(shares, MAX_SHARES_SUPPLY, "shares_exceed_max_supply");
-        }
-
-        return shares;
+        
+        uint256 newBalance = currentBalance + amount;
+        emit TreasuryDeposit(treasuryAddress, amount, newBalance, estimatedYield);
     }
 
-    function _convertToAssets(
-        uint256 shares,
-        Math.Rounding rounding
-    ) internal view returns (uint256) {
-        // Combined bounds checking for gas optimization
-        if (shares > MAX_SHARES_SUPPLY || currentNAV < MIN_NAV_VALUE || currentNAV > MAX_NAV_VALUE) {
-            if (shares > MAX_SHARES_SUPPLY) {
-                revert ConversionOutOfBounds(shares, MAX_SHARES_SUPPLY, "shares_too_large");
-            }
-            revert NAVOutOfRange(currentNAV, MIN_NAV_VALUE, MAX_NAV_VALUE, "nav_bounds_check_failed");
-        }
-
-        // Check for potential overflow in mulDiv operation
-        // shares * currentNAV should not overflow
-        if (shares > type(uint256).max / currentNAV) {
-            revert ConversionOutOfBounds(shares, type(uint256).max / currentNAV, "overflow_protection");
-        }
-
-        uint256 assets = shares.mulDiv(currentNAV, 10 ** decimals(), rounding);
-
-        // Ensure resulting assets don't exceed reasonable limits
-        if (assets > MAX_TOTAL_ASSETS) {
-            revert ConversionOutOfBounds(assets, MAX_TOTAL_ASSETS, "assets_exceed_max_limit");
-        }
-
-        return assets;
+    /**
+     * @notice Pauses the contract (pauser role only)
+     */
+    function pause() external onlyRole(PAUSER_ROLE) {
+        _pause(); // Emits standard Paused(address) event
     }
+
+    /**
+     * @notice Unpauses the contract (admin role only)  
+     */
+    function unpause() external onlyRole(ADMIN_ROLE) {
+        _unpause(); // Emits standard Unpaused(address) event
+    }
+
+    /**
+     * @notice Performs batch withdrawals for multiple users (admin only)
+     * @param owners Array of share owners
+     * @param receivers Array of addresses to receive the assets
+     * @param emergency If true, bypasses pause state for emergency situations
+     */
+    function batchWithdraw(
+        address[] calldata owners,
+        address[] calldata receivers,
+        bool emergency
+    ) external onlyRole(ADMIN_ROLE) nonReentrant {
+        // Emergency mode bypasses pause state
+        if (!emergency) {
+            require(!paused(), "Contract is paused");
+        }
+
+        _validateBatchInputs(owners, receivers);
+
+        uint256 totalAssetsWithdrawn = 0;
+        uint256 totalSharesBurned = 0;
+
+        // Emergency mode bypasses liquidity pre-check for speed
+        if (!emergency) {
+            _validateBatchLiquidity(owners);
+        }
+
+        // Process each withdrawal
+        for (uint256 i = 0; i < owners.length; i++) {
+            (uint256 assets, uint256 shares) = _processBatchWithdrawal(
+                owners[i],
+                receivers[i],
+                emergency
+            );
+
+            totalAssetsWithdrawn += assets;
+            totalSharesBurned += shares;
+        }
+
+        // Update vault state
+        totalAssetsManaged -= totalAssetsWithdrawn;
+
+        // Liquidity sufficiency check (only for non-emergency)
+        if (!emergency) {
+            uint256 vaultBalance = _getVaultBalance();
+            require(
+                totalAssetsWithdrawn <= vaultBalance,
+                "Insufficient vault liquidity for batch withdrawal"
+            );
+        }
+
+        emit BatchWithdrawal(
+            _msgSender(),
+            totalAssetsWithdrawn,
+            totalSharesBurned
+        );
+    }
+
+    // ============================================================================
+    // INTERNAL FUNCTIONS - Non-view functions first, then view functions
+    // ============================================================================
 
     // Override deposit to add business logic (M-02 fix)
     function _deposit(
@@ -429,7 +583,6 @@ contract ERC4626YieldVault is
         uint256 assets,
         uint256 shares
     ) internal override nonReentrant whenNotPaused {
-        // Combined deposit limits validation for gas optimization
         if (
             assets > MAX_SINGLE_DEPOSIT ||
             shares > MAX_SHARES_SUPPLY ||
@@ -448,119 +601,270 @@ contract ERC4626YieldVault is
             );
         }
 
-        // Overflow protection checks
-        require(
-            userDeposits[receiver] <= MAX_TOTAL_ASSETS,
-            "User deposits tracking corrupted"
-        );
-        require(
-            totalAssetsManaged <= MAX_TOTAL_ASSETS,
-            "Total assets tracking corrupted"
-        );
-
         super._deposit(caller, receiver, assets, shares);
 
-        // Update our tracking with overflow protection
-        uint256 newTotalAssets = totalAssetsManaged + assets;
-        uint256 newUserDeposits = userDeposits[receiver] + assets;
-
-        // Double-check no overflow occurred
-        require(newTotalAssets >= totalAssetsManaged, "Total assets overflow");
-        require(
-            newUserDeposits >= userDeposits[receiver],
-            "User deposits overflow"
-        );
-
-        totalAssetsManaged = newTotalAssets;
-        userDeposits[receiver] = newUserDeposits;
-        _updateUserActionTime(receiver, true); // true for deposit
+        // Update our tracking 
+        totalAssetsManaged += assets;
+        userDeposits[receiver] += assets;
+        lastDepositTime[receiver] = block.timestamp;
     }
 
-    // Override withdraw to add business logic (M-02 fix)
+    /**
+     * @notice ERC4626 withdrawal function with simplified, user-friendly business logic
+     * @dev Overrides ERC4626Upgradeable._withdraw with enhanced security and better UX
+     * @param caller The address calling the withdrawal function
+     * @param receiver The address that will receive the assets
+     * @param owner The address that owns the shares being redeemed
+     * @param assets The amount of assets to withdraw
+     * @param shares The amount of shares to burn
+     */
     function _withdraw(
         address caller,
         address receiver,
         address owner,
         uint256 assets,
         uint256 shares
-    ) internal override nonReentrant whenNotPaused {
-        // Combined bounds checking for gas optimization
-        if (assets > MAX_TOTAL_ASSETS || shares > MAX_SHARES_SUPPLY) {
-            revert WithdrawalValidationFailed(
-                owner,
-                assets,
-                shares,
-                "bounds_exceeded"
-            );
+    ) internal override nonReentrant whenNotPaused { 
+        
+        // 1. Deposit cooldown protection (anti-flash-loan, the main security requirement)
+        bool cooldownMet = lastDepositTime[owner] == 0 || 
+            block.timestamp >= lastDepositTime[owner] + withdrawalCooldown;
+        
+        if (!cooldownMet) {
+            uint256 timeRemaining = lastDepositTime[owner] + withdrawalCooldown - block.timestamp;
+            emit WithdrawalAttemptDuringCooldown(owner, assets, timeRemaining);
+            revert WithdrawalValidationFailed(owner, assets, shares, "deposit_cooldown_active");
         }
 
-        // Allow zero-value operations to pass through
-        if (assets > 0) {
-            if (!canWithdraw(owner)) {
-                // Check if it's a cooldown issue to emit specific event
-                TimeConstraint memory lastWithdrawal = lastWithdrawalConstraint[
-                    owner
-                ];
-                uint256 cooldownEnd = lastWithdrawal.timestamp +
-                    withdrawalCooldown;
+        // 2. Liquidity validation (ensure vault can fulfill withdrawal)
+        uint256 vaultBalance = _getVaultBalance();
+        require(assets <= vaultBalance, "Insufficient vault liquidity");
 
-                if (block.timestamp < cooldownEnd) {
-                    emit WithdrawalAttemptDuringCooldown(
-                        owner,
-                        assets,
-                        cooldownEnd - block.timestamp
-                    );
-                }
-                revert WithdrawalValidationFailed(owner, assets, shares, "withdrawal_not_allowed");
-            }
-
-            // Reserve ratio enforcement with combined validation
-            uint256 vaultBalance = IERC20Upgradeable(asset()).balanceOf(
-                address(this)
+        // 3. NAV update protection (only for users who deposited during recent volatility)
+        // Only apply NAV delays to users who deposited recently during volatile periods
+        if (_shouldApplyNAVDelay(owner)) {
+            require(
+                block.timestamp >= lastNAVChangeTime + navUpdateDelay,
+                "NAV recently updated, please wait"
             );
-            if (
-                vaultBalance > MAX_TOTAL_ASSETS ||
-                totalAssetsManaged > MAX_TOTAL_ASSETS
-            ) {
-                revert WithdrawalValidationFailed(owner, assets, shares, "balance_too_large");
-            }
-
-            // Use safe arithmetic for reserve ratio calculation
-            uint256 reserveRatio = totalAssetsManaged > 0
-                ? vaultBalance.mulDiv(
-                    10000,
-                    totalAssetsManaged,
-                    Math.Rounding.Down
-                )
-                : 10000;
-
-            if (reserveRatio < minReserveRatio) {
-                emit ReserveRatioViolation(
-                    owner,
-                    assets,
-                    reserveRatio,
-                    minReserveRatio
-                );
-                revert WithdrawalValidationFailed(owner, assets, shares, "insufficient_reserves");
-            }
         }
-
+ 
         super._withdraw(caller, receiver, owner, assets, shares);
 
-        // Update tracking for non-zero withdrawals
-        if (assets > 0) {
-            // Ensure no underflow in totalAssetsManaged
-            require(totalAssetsManaged >= assets, "Total assets underflow");
-            totalAssetsManaged -= assets;
+        totalAssetsManaged -= assets;
 
-            // Update user deposits with underflow protection
-            if (userDeposits[owner] >= assets) {
-                userDeposits[owner] -= assets;
-            } else {
-                userDeposits[owner] = 0;
-            }
-            _updateUserActionTime(owner, false); // false for withdrawal
+        // Update user deposits tracking (fix inconsistency issue)
+        if (userDeposits[owner] >= assets) {
+            userDeposits[owner] -= assets;
+        } else {
+            emit ConversionOverflowPrevented(owner, "userDeposits_tracking_inconsistent", userDeposits[owner]);
+            userDeposits[owner] = 0;
         }
+
+        lastWithdrawalTime[owner] = block.timestamp;
+    }
+
+    /**
+     * @dev Internal helper to process individual batch withdrawal
+     */
+    function _processBatchWithdrawal(
+        address owner,
+        address receiver,
+        bool emergency
+    ) internal returns (uint256 assets, uint256 shares) {
+        shares = balanceOf(owner);
+        if (shares == 0) return (0, 0);
+
+        assets = convertToAssets(shares);
+
+        // Non-emergency requires withdrawal eligibility check
+        if (!emergency) {
+            require(canWithdraw(owner), "Withdrawal not allowed");
+        }
+
+        _burn(owner, shares);
+        IERC20Upgradeable(asset()).safeTransfer(receiver, assets);
+
+        // Update user tracking
+        if (userDeposits[owner] >= assets) {
+            userDeposits[owner] -= assets;
+        } else {
+            userDeposits[owner] = 0;
+        }
+
+        lastWithdrawalTime[owner] = block.timestamp;
+
+        emit Withdraw(_msgSender(), receiver, owner, assets, shares);
+    }
+
+    /**
+     * @dev Determines if NAV delay should apply to a specific user
+     * Only applies to users who deposited recently during periods of NAV volatility
+     * @param user The user address to check
+     * @return true if NAV delay should be applied
+     */
+    function _shouldApplyNAVDelay(address user) internal view returns (bool) {
+        // If NAV hasn't changed recently, no delay needed
+        if (block.timestamp >= lastNAVChangeTime + navUpdateDelay) {
+            return false;
+        }
+
+        // If user deposited before the recent NAV change, no delay needed
+        if (lastDepositTime[user] < lastNAVChangeTime) {
+            return false;
+        }
+
+        // If user deposited after a significant NAV change, apply delay
+        // This prevents users from depositing right after NAV updates and immediately withdrawing
+        return true;
+    }
+
+    /**
+     * @dev Validates NAV is within bounds to eliminate code duplication
+     */
+    function _validateNAVBounds() internal view {
+        if (currentNAV < MIN_NAV_VALUE || currentNAV > MAX_NAV_VALUE) {
+            revert NAVOutOfRange(currentNAV, MIN_NAV_VALUE, MAX_NAV_VALUE, "nav_bounds_check_failed");
+        }
+    }
+
+    /**
+     * @dev Gets vault balance to eliminate repeated IERC20 calls
+     */
+    function _getVaultBalance() internal view returns (uint256) {
+        return IERC20Upgradeable(asset()).balanceOf(address(this));
+    }
+
+    // Override conversion functions to use custom NAV logic (M-02 fix)
+    function _convertToShares(
+        uint256 assets,
+        MathUpgradeable.Rounding rounding
+    ) internal view override returns (uint256) {
+        // Pure mathematical conversion using current NAV
+        // Business logic validations are handled in maxDeposit() and _deposit()
+        uint256 decimalsMultiplier = 10 ** decimals();
+        return assets.mulDiv(decimalsMultiplier, currentNAV, rounding);
+    }
+
+    function _convertToAssets(
+        uint256 shares,
+        MathUpgradeable.Rounding rounding
+    ) internal view override returns (uint256) {
+        // Pure mathematical conversion using current NAV
+        // Business logic validations are handled in maxWithdraw() and _withdraw()
+        return shares.mulDiv(currentNAV, 10 ** decimals(), rounding);
+    }
+
+    /**
+     * @dev Consolidated validation for NAV updates - combines multiple checks for gas efficiency
+     */
+    function _validateConsolidatedNAVUpdate(
+        uint256 newNAV,
+        uint256 newTotalAssets,
+        uint256 changePercentage
+    ) internal view {
+        // Combined NAV bounds and change validation
+        if (
+            newNAV < MIN_NAV_VALUE ||
+            newNAV > MAX_NAV_VALUE ||
+            (currentNAV > 0 && changePercentage > maxNAVChange)
+        ) {
+            revert NAVUpdateValidationFailed(
+                newNAV,
+                currentNAV,
+                changePercentage,
+                maxNAVChange,
+                newNAV < MIN_NAV_VALUE || newNAV > MAX_NAV_VALUE 
+                    ? "nav_outside_bounds" 
+                    : "nav_change_too_large"
+            );
+        }
+
+        // Combined total assets validation
+        uint256 vaultBalance = _getVaultBalance();
+        if (maxTotalAssetsDeviation > 10000) {
+            revert NAVUpdateValidationFailed(newNAV, currentNAV, changePercentage, 0, "assets_validation_failed");
+        }
+
+        // Validate total assets deviation
+        if (totalAssetsManaged > 0) {
+            uint256 maxDeviation = totalAssetsManaged.mulDiv(
+                maxTotalAssetsDeviation,
+                10000,
+                MathUpgradeable.Rounding.Up
+            );
+            uint256 maxAllowedAssets = totalAssetsManaged > type(uint256).max - maxDeviation
+                ? type(uint256).max
+                : totalAssetsManaged + maxDeviation;
+
+            if (newTotalAssets < vaultBalance || newTotalAssets > maxAllowedAssets) {
+                revert NAVUpdateValidationFailed(newNAV, currentNAV, changePercentage, 0, 
+                "total_assets_deviation_exceeded");
+            }
+        }
+
+        // Validate conversion overflows
+        if (newTotalAssets > 0 && totalSupply() > 0) {
+            uint256 testAssets = 1e18; // 1 token
+            if (
+                testAssets > type(uint256).max / (10 ** decimals()) ||
+                testAssets.mulDiv(10 ** decimals(), newNAV, MathUpgradeable.Rounding.Down) == 0
+            ) {
+                revert NAVUpdateValidationFailed(newNAV, currentNAV, changePercentage, 0, "conversion_overflow_risk");
+            }
+
+            uint256 testShares = 1e18; // 1 share
+            if (testShares > type(uint256).max / newNAV) {
+                revert NAVUpdateValidationFailed(newNAV, currentNAV, changePercentage, 0, "conversion_overflow_risk");
+            }
+        }
+    }
+
+    /**
+     * @dev Calculate NAV change percentage (eliminates code duplication)
+     * @param newNAV The proposed new NAV value
+     * @return changePercentage The percentage change in basis points
+     */
+    function _calculateNAVChangePercentage(
+        uint256 newNAV
+    ) internal view returns (uint256) {
+        if (currentNAV == 0) return 0;
+        return
+            newNAV > currentNAV
+                ? ((newNAV - currentNAV) * 10000) / currentNAV
+                : ((currentNAV - newNAV) * 10000) / currentNAV;
+    }
+
+    /**
+     * @dev Internal helper to validate batch liquidity requirements
+     */
+    function _validateBatchLiquidity(address[] calldata owners) internal view {
+        uint256 vaultBalance = _getVaultBalance();
+        uint256 totalAssetsNeeded = 0;
+
+        for (uint256 i = 0; i < owners.length; i++) {
+            uint256 shares = balanceOf(owners[i]);
+            if (shares > 0) {
+                totalAssetsNeeded += convertToAssets(shares);
+            }
+        }
+
+        require(
+            totalAssetsNeeded <= vaultBalance,
+            "Insufficient vault liquidity"
+        );
+    }
+
+    /**
+     * @dev Internal helper to validate batch input parameters
+     */
+    function _validateBatchInputs(
+        address[] calldata owners,
+        address[] calldata receivers
+    ) internal pure {
+        require(owners.length == receivers.length, "Array length mismatch");
+        require(owners.length > 0, "Empty arrays");
+        require(owners.length <= 50, "Too many operations"); // Reduced from 100
     }
 
     // ============================================================================
@@ -634,19 +938,6 @@ contract ERC4626YieldVault is
     }
 
     /**
-     * @notice Sets the minimum reserve ratio for the vault (admin only)
-     * @param _minReserveRatio The new minimum reserve ratio in basis points (e.g., 2000 = 20%)
-     */
-    function setMinReserveRatio(
-        uint256 _minReserveRatio
-    ) external onlyRole(ADMIN_ROLE) {
-        require(_minReserveRatio <= 10000, "Reserve ratio too high");
-        uint256 oldValue = minReserveRatio;
-        minReserveRatio = _minReserveRatio;
-        emit MinReserveRatioUpdated(oldValue, _minReserveRatio);
-    }
-
-    /**
      * @notice Sets the maximum NAV change allowed per update (admin only)
      * @param _maxNAVChange The new maximum NAV change in basis points (max 5000 = 50%)
      */
@@ -697,116 +988,54 @@ contract ERC4626YieldVault is
     }
 
     /**
-     * @dev Enhanced time validation using both timestamp and block number
-     * Follows patterns from Compound Timelock and Aave V3
+     * @notice Enables or disables the whitelist functionality (admin only)
+     * @param enabled Whether whitelist should be enabled
      */
-    function isTimeConstraintMet(
-        TimeConstraint memory constraint,
-        uint256 delay
-    ) internal view returns (bool) {
-        uint48 currentTime = uint48(block.timestamp);
-        uint32 currentBlock = uint32(block.number);
-
-        // Primary check: timestamp validation with grace period
-        bool timestampMet = currentTime >= constraint.timestamp + delay;
-        bool withinGracePeriod = currentTime <=
-            constraint.timestamp + delay + GRACE_PERIOD;
-
-        // Secondary check: block number (manipulation-resistant)
-        // Assuming average block time for the network (12s for Ethereum, 3s for BSC)
-        uint256 expectedBlocks = delay / getAverageBlockTime();
-        bool blockMet = currentBlock >= constraint.blockNumber + expectedBlocks;
-
-        // Clock drift protection
-        bool timestampValid = _isTimestampValid(
-            currentTime,
-            uint48(constraint.timestamp + delay)
-        );
-
-        // All conditions must be met for security
-        return timestampMet && blockMet && withinGracePeriod && timestampValid;
+    function setWhitelistEnabled(bool enabled) external onlyRole(ADMIN_ROLE) {
+        whitelistEnabled = enabled;
+        emit WhitelistStatusChanged(enabled, _msgSender());
     }
 
     /**
-     * @dev Validates timestamp against manipulation
-     * Inspired by Uniswap V3 oracle timestamp validation
+     * @notice Adds an address to the whitelist (admin only)
+     * @param account The address to add to whitelist
      */
-    function _isTimestampValid(
-        uint48 current,
-        uint48 target
-    ) internal view returns (bool) {
-        // Prevent future timestamps beyond reasonable drift
-        if (current > target + MAX_TIMESTAMP_DRIFT) return false;
-
-        // Ensure timestamp is not unreasonably far in the past
-        if (target > current + MAX_TIMESTAMP_DRIFT) return false;
-
-        return true;
+    function addToWhitelist(address account) external onlyRole(ADMIN_ROLE) {
+        require(account != address(0), "Cannot whitelist zero address");
+        require(!isWhitelisted[account], "Address already whitelisted");
+        
+        isWhitelisted[account] = true;
+        emit AddressWhitelisted(account, _msgSender());
     }
 
     /**
-     * @dev Get average block time for the current network
-     * Returns block time in seconds
+     * @notice Removes an address from the whitelist (admin only)
+     * @param account The address to remove from whitelist
      */
-    function getAverageBlockTime() internal view returns (uint256) {
-        uint256 chainId = block.chainid;
-        if (chainId == 1) return 12; // Ethereum mainnet
-        if (chainId == 56) return 3; // BSC mainnet
-        if (chainId == 97) return 3; // BSC testnet
-        if (chainId == 1337) return 1; // Hardhat local
-        return 12; // Default to Ethereum timing
+    function removeFromWhitelist(address account) external onlyRole(ADMIN_ROLE) {
+        require(isWhitelisted[account], "Address not whitelisted");
+        
+        isWhitelisted[account] = false;
+        emit AddressRemovedFromWhitelist(account, _msgSender());
     }
 
     /**
-     * @dev Critical operations use block number validation only
-     * Similar to Aave's approach for liquidations and other MEV-sensitive operations
+     * @notice Adds multiple addresses to the whitelist in batch (admin only)
+     * @param accounts Array of addresses to add to whitelist
      */
-    function isCriticalActionAllowed(
-        address user
-    ) internal view returns (bool) {
-        return
-            uint32(block.number) >=
-            lastCriticalActionBlock[user] + WITHDRAWAL_DELAY_BLOCKS;
-    }
-
-    /**
-     * @dev Update time constraints with both timestamp and block number
-     */
-    function _updateTimeConstraint(
-        address user,
-        mapping(address => TimeConstraint) storage constraintMap
-    ) internal {
-        constraintMap[user] = TimeConstraint({
-            timestamp: uint48(block.timestamp),
-            blockNumber: uint32(block.number),
-            tolerance: MAX_TIMESTAMP_DRIFT
-        });
-    }
-
-    /**
-     * @dev Update user action timestamps (called on deposits/withdrawals)
-     */
-    function _updateUserActionTime(address user, bool isDeposit) internal {
-        if (isDeposit) {
-            _updateTimeConstraint(user, lastDepositConstraint);
-        } else {
-            _updateTimeConstraint(user, lastWithdrawalConstraint);
-            lastCriticalActionBlock[user] = uint32(block.number);
+    function addMultipleToWhitelist(address[] calldata accounts) external onlyRole(ADMIN_ROLE) {
+        require(accounts.length > 0, "Empty accounts array");
+        require(accounts.length <= 100, "Too many accounts"); // Limit for gas
+        
+        for (uint256 i = 0; i < accounts.length; i++) {
+            address account = accounts[i];
+            require(account != address(0), "Cannot whitelist zero address");
+            
+            if (!isWhitelisted[account]) {
+                isWhitelisted[account] = true;
+                emit AddressWhitelisted(account, _msgSender());
+            }
         }
-    }
-
-    /**
-     * @notice Emergency timestamp validation bypass (admin only)
-     * @dev For use in case of network issues or extreme timestamp manipulation
-     * @param user The user address to bypass timestamp validation for
-     */
-    function emergencyBypassTimestamp(
-        address user
-    ) external onlyRole(ADMIN_ROLE) {
-        lastCriticalActionBlock[user] =
-            uint32(block.number) -
-            WITHDRAWAL_DELAY_BLOCKS;
-        emit EmergencyTimestampBypass(user);
     }
 
     /**
@@ -815,404 +1044,55 @@ contract ERC4626YieldVault is
      * @return True if withdrawal is allowed, false otherwise
      */
     function canWithdraw(address user) public view returns (bool) {
-        // Layer 1: Standard time constraint validation
-        // If user has never deposited, allow withdrawal (they have no balance anyway)
-        bool depositConstraintMet = lastDepositConstraint[user].timestamp ==
-            0 ||
-            uint48(block.timestamp) >=
-            lastDepositConstraint[user].timestamp + withdrawalCooldown;
+        // Check deposit cooldown - primary flash loan protection
+        bool depositCooldownMet = lastDepositTime[user] == 0 || 
+            block.timestamp >= lastDepositTime[user] + withdrawalCooldown;
 
-        // If user has never withdrawn before, allow withdrawal (no rate limiting needed)
-        bool withdrawalConstraintMet = lastWithdrawalConstraint[user]
-            .timestamp ==
-            0 ||
-            uint48(block.timestamp) >=
-            lastWithdrawalConstraint[user].timestamp + 1 minutes;
+        // Check withdrawal rate limiting (1 minute between withdrawals)
+        bool withdrawalRateLimitMet = lastWithdrawalTime[user] == 0 || 
+            block.timestamp >= lastWithdrawalTime[user] + 1 minutes;
 
-        // Layer 2: Critical action block-based validation (MEV protection)
-        // If user has never performed critical actions, allow them to start
-        bool criticalActionAllowed = lastCriticalActionBlock[user] == 0 ||
-            uint32(block.number) >=
-            lastCriticalActionBlock[user] + WITHDRAWAL_DELAY_BLOCKS;
+        // Check NAV update delay - prevent front-running
+        bool navDelayMet = block.timestamp >= lastNAVChangeTime + navUpdateDelay;
 
-        // Layer 3: NAV update protection - simplified for now
-        bool navConstraintMet = uint48(block.timestamp) >=
-            lastNAVChangeTime + navUpdateDelay;
-
-        return
-            depositConstraintMet &&
-            withdrawalConstraintMet &&
-            criticalActionAllowed &&
-            navConstraintMet;
+        return depositCooldownMet && withdrawalRateLimitMet && navDelayMet;
     }
 
     /**
-     * @notice Returns the time remaining until withdrawal is allowed for a user
-     * @param user The address to check withdrawal timing for
-     * @return The number of seconds until withdrawal is allowed, 0 if already allowed
+     * @notice Returns a complete breakdown of asset allocation
+     * @return vaultBalance Assets physically in the vault
+     * @return treasuryDeployed Assets deployed to treasury operations
+     * @return totalManaged Total assets under management
+     * @return utilizationRate Percentage of assets deployed (basis points, 10000 = 100%)
      */
-    function timeUntilWithdrawal(address user) external view returns (uint256) {
-        uint256 cooldownEnd = lastDepositConstraint[user].timestamp +
-            withdrawalCooldown;
-        uint256 navDelayEnd = lastNAVChangeTime + navUpdateDelay;
-        uint256 withdrawalDelayEnd = lastWithdrawalConstraint[user].timestamp +
-            1 minutes;
-
-        // Also check block-based constraint
-        uint256 blockDelayEnd = (lastCriticalActionBlock[user] +
-            WITHDRAWAL_DELAY_BLOCKS) * getAverageBlockTime();
-
-        uint256 maxEnd = cooldownEnd > navDelayEnd ? cooldownEnd : navDelayEnd;
-        maxEnd = maxEnd > withdrawalDelayEnd ? maxEnd : withdrawalDelayEnd;
-        maxEnd = maxEnd > blockDelayEnd ? maxEnd : blockDelayEnd;
-
-        return block.timestamp >= maxEnd ? 0 : maxEnd - block.timestamp;
-    }
-
-    /**
-     * @notice Updates the Net Asset Value and total assets (oracle only)
-     * @param newNAV The new NAV value (cannot be zero)
-     * @param newTotalAssets The new total assets amount
-     */
-    function updateNAV(
-        uint256 newNAV,
-        uint256 newTotalAssets
-    ) external onlyRole(ORACLE_ROLE) whenNotPaused {
-        // Basic validation first
-        if (
-            newNAV == 0 ||
-            newTotalAssets > MAX_TOTAL_ASSETS ||
-            block.timestamp < lastNAVUpdate + 6 hours
-        ) {
-            if (newNAV == 0) {
-                revert NAVUpdateValidationFailed(newNAV, currentNAV, 0, 0, "nav_must_be_positive");
-            }
-            if (newTotalAssets > MAX_TOTAL_ASSETS) {
-                revert NAVUpdateValidationFailed(newNAV, currentNAV, 0, 0, "total_assets_exceed_maximum");
-            }
-            revert NAVUpdateValidationFailed(newNAV, currentNAV, 0, 0, "update_too_frequent");
-        }
-
-        // Calculate NAV change percentage once (eliminates 3 duplicate calculations)
-        uint256 changePercentage = _calculateNAVChangePercentage(newNAV);
-
-        // Consolidated validation with helper functions
-        _validateConsolidatedNAVUpdate(newNAV, newTotalAssets, changePercentage);
-
-        // Update state
-        uint256 oldNAV = currentNAV;
-        currentNAV = newNAV;
-        totalAssetsManaged = newTotalAssets;
-        lastNAVUpdate = block.timestamp;
-
-        // Track significant changes for front-running protection
-        if (changePercentage > 100) {
-            // More than 1% change
-            lastNAVChangeTime = block.timestamp;
-        }
-
-        emit NAVUpdated(oldNAV, newNAV, newTotalAssets, block.timestamp);
-    }
-
-    /**
-     * @dev Consolidated validation for NAV updates - combines multiple checks for gas efficiency
-     */
-    function _validateConsolidatedNAVUpdate(
-        uint256 newNAV,
-        uint256 newTotalAssets,
-        uint256 changePercentage
-    ) internal {
-        // Combined NAV bounds and change validation
-        if (
-            newNAV < MIN_NAV_VALUE ||
-            newNAV > MAX_NAV_VALUE ||
-            (currentNAV > 0 && changePercentage > maxNAVChange)
-        ) {
-            revert NAVUpdateValidationFailed(
-                newNAV,
-                currentNAV,
-                changePercentage,
-                maxNAVChange,
-                newNAV < MIN_NAV_VALUE || newNAV > MAX_NAV_VALUE 
-                    ? "nav_outside_bounds" 
-                    : "nav_change_too_large"
-            );
-        }
-
-        // Combined total assets validation
-        uint256 vaultBalance = IERC20Upgradeable(asset()).balanceOf(address(this));
-        if (
-            vaultBalance > MAX_TOTAL_ASSETS ||
-            totalAssetsManaged > MAX_TOTAL_ASSETS ||
-            maxTotalAssetsDeviation > 10000
-        ) {
-            revert NAVUpdateValidationFailed(newNAV, currentNAV, changePercentage, 0, "assets_validation_failed");
-        }
-
-        // Validate total assets deviation
-        if (totalAssetsManaged > 0) {
-            uint256 maxDeviation = totalAssetsManaged.mulDiv(
-                maxTotalAssetsDeviation,
-                10000,
-                Math.Rounding.Up
-            );
-            uint256 maxAllowedAssets = totalAssetsManaged > type(uint256).max - maxDeviation
-                ? type(uint256).max
-                : totalAssetsManaged + maxDeviation;
-
-            if (newTotalAssets < vaultBalance || newTotalAssets > maxAllowedAssets) {
-                revert NAVUpdateValidationFailed(newNAV, currentNAV, changePercentage, 0, "total_assets_deviation_exceeded");
-            }
-        }
-
-        // Validate conversion overflows
-        if (newTotalAssets > 0 && totalSupply() > 0) {
-            uint256 testAssets = 1e18; // 1 token
-            if (
-                testAssets > type(uint256).max / (10 ** decimals()) ||
-                testAssets.mulDiv(10 ** decimals(), newNAV, Math.Rounding.Down) == 0
-            ) {
-                revert NAVUpdateValidationFailed(newNAV, currentNAV, changePercentage, 0, "conversion_overflow_risk");
-            }
-
-            uint256 testShares = 1e18; // 1 share
-            if (testShares > type(uint256).max / newNAV) {
-                revert NAVUpdateValidationFailed(newNAV, currentNAV, changePercentage, 0, "conversion_overflow_risk");
-            }
-        }
-    }
-
-    /**
-     * @dev Calculate NAV change percentage (eliminates code duplication)
-     * @param newNAV The proposed new NAV value
-     * @return changePercentage The percentage change in basis points
-     */
-    function _calculateNAVChangePercentage(
-        uint256 newNAV
-    ) internal view returns (uint256) {
-        if (currentNAV == 0) return 0;
-        return
-            newNAV > currentNAV
-                ? ((newNAV - currentNAV) * 10000) / currentNAV
-                : ((currentNAV - newNAV) * 10000) / currentNAV;
-    }
-
-    /**
-     * @notice Withdraws funds to the treasury address (treasury role only)
-     * @param amount The amount to withdraw to treasury
-     */
-    function withdrawToTreasury(
-        uint256 amount
-    ) external onlyRole(TREASURY_ROLE) whenNotPaused {
-        require(amount > 0, "Zero amount");
-        uint256 vaultBalance = IERC20Upgradeable(asset()).balanceOf(
-            address(this)
-        );
-        require(amount <= vaultBalance, "Insufficient balance");
-        IERC20Upgradeable(asset()).safeTransfer(treasuryAddress, amount);
-        emit TreasuryWithdrawal(treasuryAddress, amount, vaultBalance - amount);
-    }
-
-    /**
-     * @notice Pauses the contract (pauser role only)
-     */
-    function pause() external onlyRole(PAUSER_ROLE) {
-        _pause(); // Emits standard Paused(address) event
-    }
-
-    /**
-     * @notice Unpauses the contract (admin role only)  
-     */
-    function unpause() external onlyRole(ADMIN_ROLE) {
-        _unpause(); // Emits standard Unpaused(address) event
-    }
-
-    /**
-     * @notice Performs batch withdrawals for multiple users (admin only)
-     * @param owners Array of share owners
-     * @param receivers Array of addresses to receive the assets
-     * @param emergency If true, bypasses pause state for emergency situations
-     */
-    function batchWithdraw(
-        address[] calldata owners,
-        address[] calldata receivers,
-        bool emergency
-    ) external onlyRole(ADMIN_ROLE) nonReentrant {
-        // Emergency mode bypasses pause state
-        if (!emergency) {
-            require(!paused(), "Contract is paused");
-        }
-
-        _validateBatchInputs(owners, receivers);
-
-        uint256 totalAssetsWithdrawn = 0;
-        uint256 totalSharesBurned = 0;
-
-        // Emergency mode bypasses liquidity pre-check for speed
-        if (!emergency) {
-            _validateBatchLiquidity(owners);
-        }
-
-        // Process each withdrawal
-        for (uint256 i = 0; i < owners.length; i++) {
-            (uint256 assets, uint256 shares) = _processBatchWithdrawal(
-                owners[i],
-                receivers[i],
-                emergency
-            );
-
-            totalAssetsWithdrawn += assets;
-            totalSharesBurned += shares;
-        }
-
-        // Update vault state
-        totalAssetsManaged -= totalAssetsWithdrawn;
-
-        // Reserve ratio check (only for non-emergency)
-        if (!emergency) {
-            _validateBatchReserveRatio(totalAssetsWithdrawn);
-        }
-
-        emit BatchWithdrawal(
-            _msgSender(),
-            totalAssetsWithdrawn,
-            totalSharesBurned
-        );
-    }
-
-    /**
-     * @dev Internal helper to validate batch input parameters
-     */
-    function _validateBatchInputs(
-        address[] calldata owners,
-        address[] calldata receivers
-    ) internal pure {
-        require(owners.length == receivers.length, "Array length mismatch");
-        require(owners.length > 0, "Empty arrays");
-        require(owners.length <= 50, "Too many operations"); // Reduced from 100
-    }
-
-    /**
-     * @dev Internal helper to validate batch liquidity requirements
-     */
-    function _validateBatchLiquidity(address[] calldata owners) internal view {
-        uint256 vaultBalance = IERC20Upgradeable(asset()).balanceOf(
-            address(this)
-        );
-        uint256 totalAssetsNeeded = 0;
-
-        for (uint256 i = 0; i < owners.length; i++) {
-            uint256 shares = balanceOf(owners[i]);
-            if (shares > 0) {
-                totalAssetsNeeded += convertToAssets(shares);
-            }
-        }
-
-        require(
-            totalAssetsNeeded <= vaultBalance,
-            "Insufficient vault liquidity"
-        );
-    }
-
-    /**
-     * @dev Internal helper to process individual batch withdrawal
-     */
-    function _processBatchWithdrawal(
-        address owner,
-        address receiver,
-        bool emergency
-    ) internal returns (uint256 assets, uint256 shares) {
-        shares = balanceOf(owner);
-        if (shares == 0) return (0, 0);
-
-        assets = convertToAssets(shares);
-
-        // Non-emergency requires withdrawal eligibility check
-        if (!emergency) {
-            require(canWithdraw(owner), "Withdrawal not allowed");
-        }
-
-        _burn(owner, shares);
-        IERC20Upgradeable(asset()).safeTransfer(receiver, assets);
-
-        // Update user tracking
-        if (userDeposits[owner] >= assets) {
-            userDeposits[owner] -= assets;
+    function getAssetAllocation() public view returns (
+        uint256 vaultBalance,
+        uint256 treasuryDeployed, 
+        uint256 totalManaged,
+        uint256 utilizationRate
+    ) {
+        vaultBalance = _getVaultBalance();
+        totalManaged = totalAssetsManaged;
+        
+        if (vaultBalance >= totalManaged) {
+            // No assets in treasury, possibly have excess yield
+            treasuryDeployed = 0;
+            utilizationRate = 0;
         } else {
-            userDeposits[owner] = 0;
+            treasuryDeployed = totalManaged - vaultBalance;
+            utilizationRate = totalManaged > 0 ? (treasuryDeployed * 10000) / totalManaged : 0;
         }
-
-        _updateUserActionTime(owner, false);
-
-        emit Withdraw(_msgSender(), receiver, owner, assets, shares);
     }
 
     /**
-     * @dev Internal helper to validate reserve ratio after batch withdrawal
+     * @notice Checks if an address can deposit (considering whitelist if enabled)
+     * @param account The address to check
+     * @return True if the address can deposit, false otherwise
      */
-    function _validateBatchReserveRatio(
-        uint256 totalAssetsWithdrawn
-    ) internal view {
-        uint256 vaultBalance = IERC20Upgradeable(asset()).balanceOf(
-            address(this)
-        );
-        uint256 remainingBalance = vaultBalance - totalAssetsWithdrawn;
-
-        if (totalAssetsManaged > 0) {
-            uint256 reserveRatio = (remainingBalance * 10000) /
-                totalAssetsManaged;
-            require(
-                reserveRatio >= minReserveRatio,
-                "Would violate reserve ratio"
-            );
-        }
-    }
-
-    function _authorizeUpgrade(
-        address newImplementation
-    ) internal override onlyRole(UPGRADER_ROLE) {
-        emit UpgradeAuthorized(
-            _msgSender(),
-            newImplementation,
-            block.timestamp
-        );
-    }
-
-    // Storage gap for future upgrades
-    // Full 50 slots available for new deployments
-    uint256[50] private __gap;
-}
-        // Update user tracking
-        if (userDeposits[owner] >= assets) {
-            userDeposits[owner] -= assets;
-        } else {
-            userDeposits[owner] = 0;
-        }
-
-        _updateUserActionTime(owner, false);
-
-        emit Withdraw(_msgSender(), receiver, owner, assets, shares);
-    }
-
-    /**
-     * @dev Internal helper to validate reserve ratio after batch withdrawal
-     */
-    function _validateBatchReserveRatio(
-        uint256 totalAssetsWithdrawn
-    ) internal view {
-        uint256 vaultBalance = IERC20Upgradeable(asset()).balanceOf(
-            address(this)
-        );
-        uint256 remainingBalance = vaultBalance - totalAssetsWithdrawn;
-
-        if (totalAssetsManaged > 0) {
-            uint256 reserveRatio = (remainingBalance * 10000) /
-                totalAssetsManaged;
-            require(
-                reserveRatio >= minReserveRatio,
-                "Would violate reserve ratio"
-            );
-        }
+    function canDeposit(address account) public view returns (bool) {
+        if (paused()) return false;
+        if (whitelistEnabled && !isWhitelisted[account]) return false;
+        return true;
     }
 
     function _authorizeUpgrade(
