@@ -85,21 +85,24 @@ describe("Enhanced Time Validation Tests", function () {
                 .to.emit(vault, "Withdraw");
         });
 
-        it("Should handle emergency timestamp bypass correctly", async function () {
-            // Only admin should be able to bypass timestamp constraints
-            await expect(vault.connect(user1).emergencyBypassTimestamp(user1.address))
-                .to.be.revertedWith(/AccessControl.*missing role/);
+        it("Should handle simplified time validation correctly", async function () {
+            // With simplified time validation, deposits are immediately recorded 
+            // and withdrawals are controlled by simple timestamp comparisons
+            
+            // Verify that withdrawal is initially blocked due to cooldown
+            expect(await vault.canWithdraw(user1.address)).to.be.false;
+            
+            // Time advance to meet cooldown
+            await time.increase(24 * 60 * 60 + 1); // 24 hours + 1 second
+            
+            // Now withdrawal should be allowed
+            expect(await vault.canWithdraw(user1.address)).to.be.true;
 
-            // Admin can bypass
-            await expect(vault.connect(admin).emergencyBypassTimestamp(user1.address))
-                .to.emit(vault, "EmergencyTimestampBypass")
-                .withArgs(user1.address);
-
-            // Check maxWithdraw after bypass to ensure it's non-zero
+            // Check maxWithdraw after cooldown
             const maxWithdraw = await vault.maxWithdraw(user1.address);
             console.log("Max withdraw after bypass:", maxWithdraw.toString());
 
-            // Only attempt withdrawal if maxWithdraw allows it
+            // Attempt withdrawal should now succeed
             if (maxWithdraw > 0n) {
                 await expect(vault.connect(user1).withdraw(ethers.parseEther("1000"), user1.address, user1.address))
                     .to.emit(vault, "Withdraw");

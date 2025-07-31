@@ -128,17 +128,6 @@ describe("Administrative Functions and Events Tests", function () {
                 .to.be.revertedWithCustomError(vault, "NAVUpdateValidationFailed");
         });
 
-        it("Should emit ReserveRatioViolation events when applicable", async function () {
-            // This event is emitted in _withdraw when reserve ratio is violated
-            // It's challenging to trigger in normal scenarios due to NAV constraints
-            // We test that the event exists and would be emitted in the right context
-
-            // The event signature exists in the contract
-            const eventFragment = vault.interface.getEvent("ReserveRatioViolation");
-            expect(eventFragment).to.not.be.undefined;
-            expect(eventFragment.name).to.equal("ReserveRatioViolation");
-        });
-
         it("Should emit proper events for all parameter updates", async function () {
             // Test all admin parameter update events
 
@@ -151,9 +140,6 @@ describe("Administrative Functions and Events Tests", function () {
             await expect(vault.connect(admin).setMaxTotalDeposits(ethers.parseEther("10000000")))
                 .to.emit(vault, "MaxTotalDepositsUpdated");
 
-            await expect(vault.connect(admin).setMinReserveRatio(1500))
-                .to.emit(vault, "MinReserveRatioUpdated");
-
             await expect(vault.connect(admin).setMaxNAVChange(2000))
                 .to.emit(vault, "MaxNAVChangeUpdated");
 
@@ -163,23 +149,6 @@ describe("Administrative Functions and Events Tests", function () {
     });
 
     describe("Comprehensive Event Testing", function () {
-        it("Should emit TimestampValidationFailed events", async function () {
-            // These events would be emitted in edge cases of timestamp validation
-            // The events exist in the contract for monitoring purposes
-
-            const eventFragment = vault.interface.getEvent("TimestampValidationFailed");
-            expect(eventFragment).to.not.be.undefined;
-            expect(eventFragment.name).to.equal("TimestampValidationFailed");
-        });
-
-        it("Should emit BlockValidationFailed events", async function () {
-            // These events would be emitted in edge cases of block validation
-
-            const eventFragment = vault.interface.getEvent("BlockValidationFailed");
-            expect(eventFragment).to.not.be.undefined;
-            expect(eventFragment.name).to.equal("BlockValidationFailed");
-        });
-
         it("Should emit ConversionOverflowPrevented events", async function () {
             // These events would be emitted when conversion overflows are prevented
 

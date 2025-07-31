@@ -297,7 +297,7 @@ describe("Security Tests", function () {
                 .to.be.revertedWithCustomError(vault, "NAVUpdateValidationFailed");
         });
 
-        it("Should handle zero-value attacks", async function () {
+        it("Should handle zero-value operations gracefully", async function () {
             await expect(vault.connect(user1).deposit(0, user1.address))
                 .to.not.be.reverted;
 
@@ -308,6 +308,7 @@ describe("Security Tests", function () {
             // Wait for cooldown
             await time.increase(24 * 60 * 60 + 1);
 
+            // Zero-value withdrawals should be handled gracefully per ERC-4626 standard
             await expect(vault.connect(user1).withdraw(0, user1.address, user1.address))
                 .to.not.be.reverted;
         });

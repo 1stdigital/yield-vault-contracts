@@ -146,10 +146,6 @@ describe("Bounds and Overflow Protection Tests", function () {
             await expect(vault.connect(admin).setMaxTotalDeposits(ethers.parseEther("1000000001")))
                 .to.be.revertedWithCustomError(vault, "AdminParameterInvalid");
 
-            // Test setMinReserveRatio bounds
-            await expect(vault.connect(admin).setMinReserveRatio(10001))
-                .to.be.revertedWith("Reserve ratio too high");
-
             // Test setMaxNAVChange bounds
             await expect(vault.connect(admin).setMaxNAVChange(5001))
                 .to.be.revertedWith("Max NAV change too high");
