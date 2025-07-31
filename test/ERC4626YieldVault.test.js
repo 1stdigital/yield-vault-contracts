@@ -481,4 +481,57 @@ describe("ERC4626YieldVault", function () {
             expect(receipt.gasUsed).to.be.lessThan(300000);
         });
     });
+
+    describe("Whitelist Integration", function () {
+        it("Should integrate whitelist with maxDeposit correctly", async function () {
+            // Enable whitelist
+            await vault.connect(admin).setWhitelistEnabled(true);
+            
+            // Non-whitelisted user should have 0 maxDeposit
+            expect(await vault.maxDeposit(user1.address)).to.equal(0);
+            
+            // Add user to whitelist
+            await vault.connect(admin).addToWhitelist(user1.address);
+            
+            // Now should have normal maxDeposit
+            expect(await vault.maxDeposit(user1.address)).to.be.gt(0);
+        });
+
+        it("Should integrate whitelist with deposit flow", async function () {
+            // User can deposit when whitelist is disabled
+            await baseToken.connect(user1).approve(await vault.getAddress(), ethers.parseEther("1000"));
+            await vault.connect(user1).deposit(ethers.parseEther("500"), user1.address);
+            
+            // Enable whitelist
+            await vault.connect(admin).setWhitelistEnabled(true);
+            
+            // Same user cannot deposit more when not whitelisted
+            await expect(
+                vault.connect(user1).deposit(ethers.parseEther("100"), user1.address)
+            ).to.be.revertedWithCustomError(vault, "WhitelistViolation");
+            
+            // Add to whitelist and then can deposit
+            await vault.connect(admin).addToWhitelist(user1.address);
+            await expect(
+                vault.connect(user1).deposit(ethers.parseEther("100"), user1.address)
+            ).to.not.be.reverted;
+        });
+
+        it("Should allow withdrawals regardless of whitelist status", async function () {
+            // Deposit while whitelist is disabled
+            await baseToken.connect(user1).approve(await vault.getAddress(), ethers.parseEther("1000"));
+            await vault.connect(user1).deposit(ethers.parseEther("500"), user1.address);
+            
+            // Enable whitelist but don't whitelist user
+            await vault.connect(admin).setWhitelistEnabled(true);
+            
+            // Wait for cooldown
+            await time.increase(WITHDRAWAL_COOLDOWN + 1);
+            
+            // Should still be able to withdraw
+            await expect(
+                vault.connect(user1).withdraw(ethers.parseEther("100"), user1.address, user1.address)
+            ).to.not.be.reverted;
+        });
+    });
 });

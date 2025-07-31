@@ -103,6 +103,10 @@ contract ERC4626YieldVault is
     uint256 public lastNAVChangeTime;
     uint256 public maxTotalAssetsDeviation;
 
+    // Whitelist functionality
+    bool public whitelistEnabled;
+    mapping(address => bool) public isWhitelisted;
+
     // ============================================================================
     // EVENTS
     // ============================================================================
@@ -182,6 +186,12 @@ contract ERC4626YieldVault is
         uint256 maxAllowedChange
     );
 
+    // Whitelist events
+    event WhitelistStatusChanged(bool enabled, address indexed admin);
+    event AddressWhitelisted(address indexed account, address indexed admin);
+    event AddressRemovedFromWhitelist(address indexed account, address indexed admin);
+    event WhitelistAccessDenied(address indexed account, string operation);
+
     // ============================================================================
     // CUSTOM ERRORS
     // ============================================================================
@@ -217,6 +227,10 @@ contract ERC4626YieldVault is
         uint256 maxAllowed,
         string reason
     );
+
+    // Whitelist errors
+    error WhitelistViolation(address account, string operation);
+    error WhitelistManagementFailed(address account, string reason);
 
     // ============================================================================
     // CONSTRUCTOR
@@ -260,6 +274,25 @@ contract ERC4626YieldVault is
         _grantRole(TREASURY_ROLE, _defaultAdmin);
         _grantRole(PAUSER_ROLE, _defaultAdmin);
         _grantRole(UPGRADER_ROLE, _defaultAdmin);
+
+        // Initialize whitelist as disabled
+        whitelistEnabled = false;
+    }
+
+    // ============================================================================
+    // MODIFIERS
+    // ============================================================================
+
+    /**
+     * @dev Modifier to check if an account is whitelisted when whitelist is enabled
+     * @param account The address to check whitelist status for
+     */
+    modifier onlyWhitelisted(address account) {
+        if (whitelistEnabled && !isWhitelisted[account]) {
+            emit WhitelistAccessDenied(account, "access_restricted_to_whitelisted_accounts");
+            revert WhitelistViolation(account, "account_not_whitelisted");
+        }
+        _;
     }
 
     // ============================================================================
@@ -283,6 +316,9 @@ contract ERC4626YieldVault is
         address receiver
     ) public view override returns (uint256) {
         if (paused()) return 0;
+        
+        // Check whitelist if enabled
+        if (whitelistEnabled && !isWhitelisted[receiver]) return 0;
 
         // ERC-4626 compliance: Return type(uint256).max if no effective limits
         if (maxUserDeposit >= MAX_SINGLE_DEPOSIT && maxTotalDeposits >= MAX_TOTAL_ASSETS) {
@@ -340,6 +376,16 @@ contract ERC4626YieldVault is
     function maxRedeem(address owner) public view override returns (uint256) {
         if (!canWithdraw(owner)) return 0;
         return super.maxRedeem(owner);
+    }
+
+    /** @dev See {IERC4626-deposit}. Override to add whitelist check */
+    function deposit(uint256 assets, address receiver) public virtual override onlyWhitelisted(receiver) returns (uint256) {
+        return super.deposit(assets, receiver);
+    }
+
+    /** @dev See {IERC4626-mint}. Override to add whitelist check */
+    function mint(uint256 shares, address receiver) public virtual override onlyWhitelisted(receiver) returns (uint256) {
+        return super.mint(shares, receiver);
     }
 
     // ============================================================================
@@ -942,6 +988,57 @@ contract ERC4626YieldVault is
     }
 
     /**
+     * @notice Enables or disables the whitelist functionality (admin only)
+     * @param enabled Whether whitelist should be enabled
+     */
+    function setWhitelistEnabled(bool enabled) external onlyRole(ADMIN_ROLE) {
+        whitelistEnabled = enabled;
+        emit WhitelistStatusChanged(enabled, _msgSender());
+    }
+
+    /**
+     * @notice Adds an address to the whitelist (admin only)
+     * @param account The address to add to whitelist
+     */
+    function addToWhitelist(address account) external onlyRole(ADMIN_ROLE) {
+        require(account != address(0), "Cannot whitelist zero address");
+        require(!isWhitelisted[account], "Address already whitelisted");
+        
+        isWhitelisted[account] = true;
+        emit AddressWhitelisted(account, _msgSender());
+    }
+
+    /**
+     * @notice Removes an address from the whitelist (admin only)
+     * @param account The address to remove from whitelist
+     */
+    function removeFromWhitelist(address account) external onlyRole(ADMIN_ROLE) {
+        require(isWhitelisted[account], "Address not whitelisted");
+        
+        isWhitelisted[account] = false;
+        emit AddressRemovedFromWhitelist(account, _msgSender());
+    }
+
+    /**
+     * @notice Adds multiple addresses to the whitelist in batch (admin only)
+     * @param accounts Array of addresses to add to whitelist
+     */
+    function addMultipleToWhitelist(address[] calldata accounts) external onlyRole(ADMIN_ROLE) {
+        require(accounts.length > 0, "Empty accounts array");
+        require(accounts.length <= 100, "Too many accounts"); // Limit for gas
+        
+        for (uint256 i = 0; i < accounts.length; i++) {
+            address account = accounts[i];
+            require(account != address(0), "Cannot whitelist zero address");
+            
+            if (!isWhitelisted[account]) {
+                isWhitelisted[account] = true;
+                emit AddressWhitelisted(account, _msgSender());
+            }
+        }
+    }
+
+    /**
      * @notice Checks if a user can withdraw based on cooldown and other constraints
      * @param user The address to check withdrawal eligibility for
      * @return True if withdrawal is allowed, false otherwise
@@ -985,6 +1082,17 @@ contract ERC4626YieldVault is
             treasuryDeployed = totalManaged - vaultBalance;
             utilizationRate = totalManaged > 0 ? (treasuryDeployed * 10000) / totalManaged : 0;
         }
+    }
+
+    /**
+     * @notice Checks if an address can deposit (considering whitelist if enabled)
+     * @param account The address to check
+     * @return True if the address can deposit, false otherwise
+     */
+    function canDeposit(address account) public view returns (bool) {
+        if (paused()) return false;
+        if (whitelistEnabled && !isWhitelisted[account]) return false;
+        return true;
     }
 
     function _authorizeUpgrade(
