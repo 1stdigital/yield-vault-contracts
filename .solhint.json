@@ -1,0 +1,55 @@
+{
+    "extends": "solhint:default",
+    "plugins": [],
+    "rules": {
+        "code-complexity": [
+            "error",
+            8
+        ],
+        "compiler-version": [
+            "error",
+            "^0.8.21"
+        ],
+        "const-name-snakecase": "error",
+        "constructor-syntax": "error",
+        "func-visibility": [
+            "error",
+            {
+                "ignoreConstructors": true
+            }
+        ],
+        "max-line-length": [
+            "error",
+            120
+        ],
+        "not-rely-on-time": "off",
+        "pragma-solidity": "error",
+        "reason-string": [
+            "warn",
+            {
+                "maxLength": 64
+            }
+        ],
+        "avoid-suicide": "error",
+        "avoid-sha3": "error",
+        "avoid-low-level-calls": "error",
+        "avoid-call-value": "error",
+        "avoid-tx-origin": "error",
+        "check-send-result": "error",
+        "func-name-mixedcase": "error",
+        "var-name-mixedcase": "error",
+        "state-visibility": "error",
+        "imports-on-top": "error",
+        "visibility-modifier-order": "error",
+        "no-unused-vars": "error",
+        "payable-fallback": "error",
+        "no-complex-fallback": "error",
+        "reentrancy": "error",
+        "avoid-throw": "error",
+        "no-inline-assembly": "off",
+        "mark-callable-contracts": "error",
+        "multiple-sends": "error",
+        "ordering": "error",
+        "no-unreachable-code": "error"
+    }
+}
