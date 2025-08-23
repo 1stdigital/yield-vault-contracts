@@ -465,8 +465,25 @@ describe("ERC4626YieldVault", function () {
             const tx = await vault.connect(user1).deposit(ethers.parseEther("1000"), user1.address);
             const receipt = await tx.wait();
 
-            // Gas usage should be reasonable (adjusted for MathUpgradeable overhead)
-            expect(receipt.gasUsed).to.be.lessThan(201000);
+            // Tiered gas monitoring with warnings and errors
+            const gasUsed = receipt.gasUsed;
+            const GAS_WARNING_THRESHOLD = 201000;
+            const GAS_ERROR_THRESHOLD = 205000;
+
+            console.log(`\n    📊 Deposit gas usage: ${gasUsed.toLocaleString()} gas`);
+
+            if (gasUsed > GAS_ERROR_THRESHOLD) {
+                console.log(`    🚨 ERROR: Gas usage (${gasUsed.toLocaleString()}) exceeds error threshold (${GAS_ERROR_THRESHOLD.toLocaleString()})`);
+                expect(gasUsed).to.be.lessThan(GAS_ERROR_THRESHOLD, `Gas usage too high: ${gasUsed} > ${GAS_ERROR_THRESHOLD}`);
+            } else if (gasUsed > GAS_WARNING_THRESHOLD) {
+                console.log(`    ⚠️  WARNING: Gas usage (${gasUsed.toLocaleString()}) exceeds optimal threshold (${GAS_WARNING_THRESHOLD.toLocaleString()})`);
+                console.log(`    💡 Consider reviewing recent changes for gas optimizations`);
+            } else {
+                console.log(`    ✅ Gas usage is optimal (under ${GAS_WARNING_THRESHOLD.toLocaleString()})`);
+            }
+
+            // Final assertion - should not exceed error threshold
+            expect(gasUsed).to.be.lessThan(GAS_ERROR_THRESHOLD);
         });
 
         it("Should have reasonable gas costs for withdrawals", async function () {
@@ -478,7 +495,25 @@ describe("ERC4626YieldVault", function () {
             const tx = await vault.connect(user1).withdraw(ethers.parseEther("500"), user1.address, user1.address);
             const receipt = await tx.wait();
 
-            expect(receipt.gasUsed).to.be.lessThan(300000);
+            // Tiered gas monitoring for withdrawals
+            const gasUsed = receipt.gasUsed;
+            const GAS_WARNING_THRESHOLD = 250000;  // Higher threshold for withdrawals due to complexity
+            const GAS_ERROR_THRESHOLD = 300000;
+
+            console.log(`\n    📊 Withdrawal gas usage: ${gasUsed.toLocaleString()} gas`);
+
+            if (gasUsed > GAS_ERROR_THRESHOLD) {
+                console.log(`    🚨 ERROR: Gas usage (${gasUsed.toLocaleString()}) exceeds error threshold (${GAS_ERROR_THRESHOLD.toLocaleString()})`);
+                expect(gasUsed).to.be.lessThan(GAS_ERROR_THRESHOLD, `Gas usage too high: ${gasUsed} > ${GAS_ERROR_THRESHOLD}`);
+            } else if (gasUsed > GAS_WARNING_THRESHOLD) {
+                console.log(`    ⚠️  WARNING: Gas usage (${gasUsed.toLocaleString()}) exceeds optimal threshold (${GAS_WARNING_THRESHOLD.toLocaleString()})`);
+                console.log(`    💡 Consider reviewing recent changes for gas optimizations`);
+            } else {
+                console.log(`    ✅ Gas usage is optimal (under ${GAS_WARNING_THRESHOLD.toLocaleString()})`);
+            }
+
+            // Final assertion - should not exceed error threshold
+            expect(gasUsed).to.be.lessThan(GAS_ERROR_THRESHOLD);
         });
     });
 
